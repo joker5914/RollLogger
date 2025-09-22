@@ -1,0 +1,7 @@
+## Interface: 11200
+## Title: RollLogger
+## Notes: Logs your own /roll results and builds a CSV-friendly buffer for analysis.
+## Author: Coldsnappy
+## Version: 1.0.0
+## SavedVariables: RollLoggerDB
+RollLogger.lua
