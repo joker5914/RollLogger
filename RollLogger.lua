@@ -69,6 +69,7 @@ local function buildRollParser()
 end
 
 local function isPlayerMe(name)
+  name = trim(name)
   local me = UnitName("player")
   return name == me
 end
@@ -108,17 +109,12 @@ end
 SLASH_ROLLLOGGER1 = "/rolllog"
 SlashCmdList["ROLLLOGGER"] = function(msg)
   ensureDB()
-
-  -- normalize: make sure it's a string, trim whitespace, lowercase
   if type(msg) ~= "string" then msg = "" end
-  msg = string.gsub(msg, "^%s*(.-)%s*$", "%1")   -- trim
-  msg = string.lower(msg)
+  msg = trim(string.lower(msg))
 
   if msg == "" or msg == "stats" then
     local entries = RollLoggerDB.entries or {}
-    local n = table.getn(entries)
-
-    -- count 1–100 rolls > 50
+    local n = tlen(entries)
     local gt50 = 0
     for i = 1, n do
       local r = entries[i]
@@ -126,17 +122,14 @@ SlashCmdList["ROLLLOGGER"] = function(msg)
         gt50 = gt50 + 1
       end
     end
-
     DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r Recorded rolls: %d  (1-100 > 50: %d)", n, gt50))
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Commands: /rolllog stats   /rolllog export   /rolllog reset")
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Commands: /rolllog stats   /rolllog export   /rolllog reset   /rolllog debug")
     return
 
   elseif msg == "export" then
-    -- rebuild CSV buffer from entries
     RollLoggerDB.csvLines = { "timestamp,player,result,min,max,idx" }
     local entries = RollLoggerDB.entries or {}
-    local n = table.getn(entries)
-    for i = 1, n do
+    for i = 1, tlen(entries) do
       local r = entries[i]
       if r then appendCSV(r.ts, r.player, r.result, r.min, r.max, r.idx) end
     end
@@ -150,10 +143,13 @@ SlashCmdList["ROLLLOGGER"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Data cleared.")
     return
 
-  else
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Unknown command: " .. msg)
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Commands: /rolllog stats   /rolllog export   /rolllog reset")
+  elseif msg == "debug" then
+    ROLLLOGGER_DEBUG = not ROLLLOGGER_DEBUG
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Debug: " .. (ROLLLOGGER_DEBUG and "ON" or "OFF"))
+    return
   end
+
+  DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Unknown command. Commands: /rolllog stats   /rolllog export   /rolllog reset   /rolllog debug")
 end
 
 
@@ -176,17 +172,36 @@ f:SetScript("OnEvent", function(_, event, a1)
   if event == "CHAT_MSG_SYSTEM" then
     if not rollParser then buildRollParser() end
     local msg = a1 or _G.arg1 or ""
-    -- Localized pattern first
-    local _, _, p, r, mn, mx = string.find(msg, rollParser)
-    if p and r and mn and mx then
-      recordRoll(p, r, mn, mx)
-      return
+
+    -- optional debug: show raw system line
+    if ROLLLOGGER_DEBUG and string.find(msg, "roll", 1, true) then
+      DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r SYS: " .. msg)
     end
-    -- English fallback
+
+    -- 1) strict English fallback (matches your screenshot exactly)
     local _, _, p2, r2, mn2, mx2 = string.find(msg, "^(.+) rolls (%d+) %((%d+)%-(%d+)%)$")
     if p2 and r2 and mn2 and mx2 then
+      p2 = trim(p2)
       recordRoll(p2, r2, mn2, mx2)
+      if ROLLLOGGER_DEBUG then
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r parsed EN: %s %s (%s-%s)", p2, r2, mn2, mx2))
+      end
       return
+    end
+
+    -- 2) localized pattern (just in case your client swaps strings)
+    local _, _, p, r, mn, mx = string.find(msg, rollParser or "")
+    if p and r and mn and mx then
+      p = trim(p)
+      recordRoll(p, r, mn, mx)
+      if ROLLLOGGER_DEBUG then
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r parsed LOC: %s %s (%s-%s)", p, r, mn, mx))
+      end
+      return
+    end
+
+    if ROLLLOGGER_DEBUG then
+      DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r no match")
     end
   end
 end)
