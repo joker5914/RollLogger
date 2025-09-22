@@ -109,7 +109,7 @@ SlashCmdList["ROLLLOGGER"] = function(msg)
   msg = msg and msg:lower() or ""
 
   if msg == "stats" or msg == "" then
-    local n = #RollLoggerDB.entries
+    local n = table.getn(RollLoggerDB.entries or {})
     local gt50 = 0
     for _, r in ipairs(RollLoggerDB.entries) do
       if r.min == 1 and r.max == 100 and r.result and r.result > 50 then
