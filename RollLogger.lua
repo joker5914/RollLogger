@@ -143,39 +143,31 @@ SlashCmdList["ROLLLOGGER"] = function(msg)
 end
 
 f:SetScript("OnEvent", function(_, event, arg1)
-  if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
-    ensureDB()
-    buildRollParser()
+  if event == "ADDON_LOADED" then
+    if arg1 == ADDON_NAME then
+      ensureDB()
+      buildRollParser()
+    end
+    return
+
   elseif event == "PLAYER_LOGIN" then
     ensureDB()
     if not rollParser then buildRollParser() end
-    -- Try localized pattern:
-    elseif event == "CHAT_MSG_SYSTEM" then
-      if not rollParser then buildRollParser() end
-      local msg = arg1 or ""
+    return
 
-      -- Try localized pattern:
-      -- string.find returns: startIdx, endIdx, capture1, capture2, ...
-      local _, _, p, r, a, b = string.find(msg, rollParser)
-      if p and r and a and b then
-        recordRoll(p, r, a, b)
-        return
-      end
+  elseif event == "CHAT_MSG_SYSTEM" then
+    if not rollParser then buildRollParser() end
+    local msg = arg1 or ""
 
-      -- Fallback to English just in case
-      local _, _, p2, r2, a2, b2 = string.find(msg, "^(.+) rolls (%d+) %((%d+)%-(%d+)%)$")
-      if p2 and r2 and a2 and b2 then
-        recordRoll(p2, r2, a2, b2)
-        return
-      end
-    end
-
+    -- Try localized pattern (captures come after the end index).
+    local _, _, p, r, a, b = string.find(msg, rollParser)
     if p and r and a and b then
       recordRoll(p, r, a, b)
       return
     end
-    -- Fallback to English just in case
-    local p2, r2, a2, b2 = msg:match("^(.+) rolls (%d+) %((%d+)%-(%d+)%)$")
+
+    -- Fallback to English pattern.
+    local _, _, p2, r2, a2, b2 = string.find(msg, "^(.+) rolls (%d+) %((%d+)%-(%d+)%)$")
     if p2 and r2 and a2 and b2 then
       recordRoll(p2, r2, a2, b2)
       return
