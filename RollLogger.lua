@@ -51,12 +51,12 @@ local function buildRollParser()
   -- Convert the localized format into a Lua pattern:
   -- Replace %s with (.+), %d with (%d+), escape punctuation.
   local patt = fmt
-  patt = patt:gsub("%%s", "(.+)")
-  patt = patt:gsub("%%d", "(%%d+)")
+  patt = patt:string.gsub("%%s", "(.+)")
+  patt = patt:string.gsub("%%d", "(%%d+)")
   -- Escape parentheses and other magic characters not covered by replacements
   -- We already replaced (%d+) for digits; now ensure hyphen is literal
-  patt = patt:gsub("%(", "%%("):gsub("%)", "%%)")
-  patt = patt:gsub("%-", "%%-")
+  patt = patt:string.gsub("%(", "%%("):string.gsub("%)", "%%)")
+  patt = patt:string.gsub("%-", "%%-")
   -- Example result: "(.+) rolls (%d+) %((%d+)%-((%d+))%)"
   rollParser = patt
 end
@@ -69,17 +69,17 @@ local function isPlayerMe(name)
 end
 
 local function appendCSV(ts, player, result, minv, maxv, idx)
-  -- Sanitize commas/quotes – player names shouldn’t have commas but we’ll be safe.
   local function q(s)
     s = tostring(s or "")
-    if s:find('[",]') then
-      s = '"' .. s:gsub('"', '""') .. '"'
+    if string.find(s, '[",]') then
+      s = '"' .. string.gsub(s, '"', '""') .. '"'
     end
     return s
   end
   local line = table.concat({ q(ts), q(player), q(result), q(minv), q(maxv), q(idx) }, ",")
   table.insert(RollLoggerDB.csvLines, line)
 end
+
 
 local function recordRoll(player, result, minv, maxv)
   ensureDB()
@@ -106,10 +106,11 @@ end
 SLASH_ROLLLOGGER1 = "/rolllog"
 SlashCmdList["ROLLLOGGER"] = function(msg)
   ensureDB()
-  msg = msg and msg:lower() or ""
+  -- Lua 5.0 (WoW 1.12) — use string.lower, not msg:lower()
+  msg = (type(msg) == "string" and string.lower(msg)) or ""
 
   if msg == "stats" or msg == "" then
-    local n = table.getn(RollLoggerDB.entries or {})
+    local n = table.getn(RollLoggerDB.entries or {})  -- avoid '#'
     local gt50 = 0
     for _, r in ipairs(RollLoggerDB.entries) do
       if r.min == 1 and r.max == 100 and r.result and r.result > 50 then
@@ -120,26 +121,25 @@ SlashCmdList["ROLLLOGGER"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r /rolllog export  - rebuild CSV buffer")
     DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r /rolllog reset   - clear data (irreversible)")
     return
+
   elseif msg == "reset" then
     RollLoggerDB.entries   = {}
     RollLoggerDB.csvLines  = { "timestamp,player,result,min,max,idx" }
     RollLoggerDB.sessionCount = 0
-    -- keep totalCount so your idx stays monotonic across sessions; reset if you want:
-    -- RollLoggerDB.totalCount = 0
     DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Data cleared.")
     return
+
   elseif msg == "export" then
-    -- Rebuild CSV buffer from entries just in case.
     RollLoggerDB.csvLines = { "timestamp,player,result,min,max,idx" }
     for _, r in ipairs(RollLoggerDB.entries) do
+      -- appendCSV uses string.find-safe version below
       appendCSV(r.ts, r.player, r.result, r.min, r.max, r.idx)
     end
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r CSV buffer rebuilt. It will be present in SavedVariables after you /reload or logout.")
-    return
-  else
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Commands: /rolllog, /rolllog stats, /rolllog export, /rolllog reset")
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r CSV buffer rebuilt. It will be written on /reload or logout.")
     return
   end
+
+  DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Commands: /rolllog, /rolllog stats, /rolllog export, /rolllog reset")
 end
 
 f:SetScript("OnEvent", function(_, event, arg1)
@@ -157,16 +157,14 @@ f:SetScript("OnEvent", function(_, event, arg1)
 
   elseif event == "CHAT_MSG_SYSTEM" then
     if not rollParser then buildRollParser() end
-    local msg = arg1 or ""
+    local msg = arg1 or _G.arg1 or ""
 
-    -- Try localized pattern (captures come after the end index).
     local _, _, p, r, a, b = string.find(msg, rollParser)
     if p and r and a and b then
       recordRoll(p, r, a, b)
       return
     end
 
-    -- Fallback to English pattern.
     local _, _, p2, r2, a2, b2 = string.find(msg, "^(.+) rolls (%d+) %((%d+)%-(%d+)%)$")
     if p2 and r2 and a2 and b2 then
       recordRoll(p2, r2, a2, b2)
