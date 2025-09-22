@@ -149,11 +149,27 @@ f:SetScript("OnEvent", function(_, event, arg1)
   elseif event == "PLAYER_LOGIN" then
     ensureDB()
     if not rollParser then buildRollParser() end
-  elseif event == "CHAT_MSG_SYSTEM" then
-    if not rollParser then buildRollParser() end
-    local msg = arg1 or ""
     -- Try localized pattern:
-    local p, r, a, b = msg:match(rollParser)
+    elseif event == "CHAT_MSG_SYSTEM" then
+      if not rollParser then buildRollParser() end
+      local msg = arg1 or ""
+
+      -- Try localized pattern:
+      -- string.find returns: startIdx, endIdx, capture1, capture2, ...
+      local _, _, p, r, a, b = string.find(msg, rollParser)
+      if p and r and a and b then
+        recordRoll(p, r, a, b)
+        return
+      end
+
+      -- Fallback to English just in case
+      local _, _, p2, r2, a2, b2 = string.find(msg, "^(.+) rolls (%d+) %((%d+)%-(%d+)%)$")
+      if p2 and r2 and a2 and b2 then
+        recordRoll(p2, r2, a2, b2)
+        return
+      end
+    end
+
     if p and r and a and b then
       recordRoll(p, r, a, b)
       return
