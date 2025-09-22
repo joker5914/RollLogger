@@ -108,23 +108,39 @@ end
 SLASH_ROLLLOGGER1 = "/rolllog"
 SlashCmdList["ROLLLOGGER"] = function(msg)
   ensureDB()
+
+  -- normalize: make sure it's a string, trim whitespace, lowercase
   if type(msg) ~= "string" then msg = "" end
+  msg = string.gsub(msg, "^%s*(.-)%s*$", "%1")   -- trim
   msg = string.lower(msg)
 
   if msg == "" or msg == "stats" then
-    local entries = RollLoggerDB.entries
-    local n = tlen(entries)
+    local entries = RollLoggerDB.entries or {}
+    local n = table.getn(entries)
+
+    -- count 1–100 rolls > 50
     local gt50 = 0
-    local i
     for i = 1, n do
       local r = entries[i]
       if r and r.min == 1 and r.max == 100 and r.result and r.result > 50 then
         gt50 = gt50 + 1
       end
     end
-    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r Recorded rolls: %d  (1-100 and >50: %d)", n, gt50))
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r /rolllog export  - rebuild CSV buffer")
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r /rolllog reset   - clear data")
+
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r Recorded rolls: %d  (1-100 > 50: %d)", n, gt50))
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Commands: /rolllog stats   /rolllog export   /rolllog reset")
+    return
+
+  elseif msg == "export" then
+    -- rebuild CSV buffer from entries
+    RollLoggerDB.csvLines = { "timestamp,player,result,min,max,idx" }
+    local entries = RollLoggerDB.entries or {}
+    local n = table.getn(entries)
+    for i = 1, n do
+      local r = entries[i]
+      if r then appendCSV(r.ts, r.player, r.result, r.min, r.max, r.idx) end
+    end
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r CSV buffer rebuilt. It will be written on /reload or logout.")
     return
 
   elseif msg == "reset" then
@@ -134,21 +150,12 @@ SlashCmdList["ROLLLOGGER"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Data cleared.")
     return
 
-  elseif msg == "export" then
-    RollLoggerDB.csvLines = { "timestamp,player,result,min,max,idx" }
-    local entries = RollLoggerDB.entries
-    local n = tlen(entries)
-    local i
-    for i = 1, n do
-      local r = entries[i]
-      if r then appendCSV(r.ts, r.player, r.result, r.min, r.max, r.idx) end
-    end
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r CSV buffer rebuilt. It will be written on /reload/logout.")
-    return
+  else
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Unknown command: " .. msg)
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Commands: /rolllog stats   /rolllog export   /rolllog reset")
   end
-
-  DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Commands: /rolllog, /rolllog stats, /rolllog export, /rolllog reset")
 end
+
 
 -- Event handler (no colon-string methods; use string.find and globals-only arg1 fallback)
 f:SetScript("OnEvent", function(_, event, a1)
