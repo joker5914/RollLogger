@@ -2,6 +2,10 @@
 
 local ADDON_NAME = "RollLogger"
 
+local ROLLLOGGER_DEBUG = false
+local function trim(s) return (string.gsub(s or "", "^%s*(.-)%s*$", "%1")) end
+local function tlen(t) return table.getn(t or {}) end
+
 local f = CreateFrame("Frame")
 f:RegisterEvent("ADDON_LOADED")
 f:RegisterEvent("PLAYER_LOGIN")
