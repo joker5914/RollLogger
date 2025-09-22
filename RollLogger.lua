@@ -1,7 +1,7 @@
--- RollLogger.lua
--- Logs your /roll results via CHAT_MSG_SYSTEM and stores both structured rows and CSV lines in SavedVariables.
+-- RollLogger.lua (Turtle/Vanilla-safe)
 
 local ADDON_NAME = "RollLogger"
+
 local f = CreateFrame("Frame")
 f:RegisterEvent("ADDON_LOADED")
 f:RegisterEvent("PLAYER_LOGIN")
@@ -9,61 +9,66 @@ f:RegisterEvent("CHAT_MSG_SYSTEM")
 
 -- SavedVariables schema:
 -- RollLoggerDB = {
---   entries = { { ts=UNIX, player="Name", result=57, min=1, max=100, idx=1 }, ... },
+--   entries = { { ts="2025-09-22 12:34:56", player="Name", result=57, min=1, max=100, idx=1 }, ... },
 --   csvLines = { "timestamp,player,result,min,max,idx", ... },
---   sessionCount = 0, -- only your own rolls are recorded
+--   sessionCount = 0,
 --   totalCount   = 0,
---   localeFmt    = RANDOM_ROLL_RESULT at first run, to futureproof parsing
+--   localeFmt    = RANDOM_ROLL_RESULT,
+--   csvInit = true
 -- }
 
+local function tlen(t) return table.getn(t or {}) end
+
 local function now()
-  -- WoW Classic/Turtle doesn’t have time() exposed. Use GetTime() (seconds since UI load) + a session base.
-  -- We’ll keep human-readable instead: date("%Y-%m-%d %H:%M:%S")
-  return date("%Y-%m-%d %H:%M:%S")
+  -- WoW exposes date() in 1.12; fall back if not.
+  if type(date) == "function" then
+    return date("%Y-%m-%d %H:%M:%S")
+  end
+  return tostring(GetTime()) -- seconds since UI load
 end
 
 local function ensureDB()
-  if not RollLoggerDB or type(RollLoggerDB) ~= "table" then
-    RollLoggerDB = {}
-  end
-  RollLoggerDB.entries   = RollLoggerDB.entries   or {}
-  RollLoggerDB.csvLines  = RollLoggerDB.csvLines  or {}
-  RollLoggerDB.sessionCount = RollLoggerDB.sessionCount or 0
-  RollLoggerDB.totalCount   = RollLoggerDB.totalCount   or 0
+  if type(RollLoggerDB) ~= "table" then RollLoggerDB = {} end
+  if type(RollLoggerDB.entries) ~= "table" then RollLoggerDB.entries = {} end
+  if type(RollLoggerDB.csvLines) ~= "table" then RollLoggerDB.csvLines = {} end
   if not RollLoggerDB.csvInit then
-    -- header
     RollLoggerDB.csvLines[1] = "timestamp,player,result,min,max,idx"
     RollLoggerDB.csvInit = true
   end
-  if not RollLoggerDB.localeFmt then
-    -- Persist the current roll pattern for reference
-    RollLoggerDB.localeFmt = RANDOM_ROLL_RESULT or "%s rolls %d (%d-%d)"
-  end
+  if not RollLoggerDB.sessionCount then RollLoggerDB.sessionCount = 0 end
+  if not RollLoggerDB.totalCount   then RollLoggerDB.totalCount   = 0 end
+  if not RollLoggerDB.localeFmt    then RollLoggerDB.localeFmt    = RANDOM_ROLL_RESULT or "%s rolls %d (%d-%d)" end
 end
 
--- Robust parser for system "roll" lines across locales.
--- In 1.12, RANDOM_ROLL_RESULT = "%s rolls %d (%d-%d)" (localized).
--- We build a pattern from that format string if available. Fallback to EN.
+-- Build a Lua pattern from RANDOM_ROLL_RESULT safely (escape all magic chars except placeholders).
 local rollParser
+
+local function escape_magic(s)
+  return (string.gsub(s, "([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1"))
+end
 
 local function buildRollParser()
   local fmt = RANDOM_ROLL_RESULT or "%s rolls %d (%d-%d)"
-  -- Convert the localized format into a Lua pattern:
-  -- Replace %s with (.+), %d with (%d+), escape punctuation.
-  local patt = fmt
-  patt = patt:string.gsub("%%s", "(.+)")
-  patt = patt:string.gsub("%%d", "(%%d+)")
-  -- Escape parentheses and other magic characters not covered by replacements
-  -- We already replaced (%d+) for digits; now ensure hyphen is literal
-  patt = patt:string.gsub("%(", "%%("):string.gsub("%)", "%%)")
-  patt = patt:string.gsub("%-", "%%-")
-  -- Example result: "(.+) rolls (%d+) %((%d+)%-((%d+))%)"
-  rollParser = patt
+  local parts = {}
+  local i = 1
+  while true do
+    local j, k, spec = string.find(fmt, "%%([sd])", i)
+    if not j then
+      table.insert(parts, escape_magic(string.sub(fmt, i)))
+      break
+    end
+    table.insert(parts, escape_magic(string.sub(fmt, i, j - 1)))
+    if spec == "s" then
+      table.insert(parts, "(.+)")
+    else -- 'd'
+      table.insert(parts, "(%d+)")
+    end
+    i = k + 1
+  end
+  rollParser = table.concat(parts)
 end
 
 local function isPlayerMe(name)
-  -- Strip realm if any; Turtle/Vanilla typically has no realm in names, but be safe.
-  name = name or ""
   local me = UnitName("player")
   return name == me
 end
@@ -80,15 +85,12 @@ local function appendCSV(ts, player, result, minv, maxv, idx)
   table.insert(RollLoggerDB.csvLines, line)
 end
 
-
 local function recordRoll(player, result, minv, maxv)
   ensureDB()
-
-  -- Only log YOUR rolls (as requested: "every /roll I do")
   if not isPlayerMe(player) then return end
 
-  RollLoggerDB.sessionCount = (RollLoggerDB.sessionCount or 0) + 1
-  RollLoggerDB.totalCount   = (RollLoggerDB.totalCount or 0) + 1
+  RollLoggerDB.sessionCount = RollLoggerDB.sessionCount + 1
+  RollLoggerDB.totalCount   = RollLoggerDB.totalCount + 1
 
   local row = {
     ts     = now(),
@@ -102,72 +104,81 @@ local function recordRoll(player, result, minv, maxv)
   appendCSV(row.ts, row.player, row.result, row.min, row.max, row.idx)
 end
 
--- Slash commands
+-- Slash command: /rolllog, /rolllog stats, /rolllog export, /rolllog reset
 SLASH_ROLLLOGGER1 = "/rolllog"
 SlashCmdList["ROLLLOGGER"] = function(msg)
   ensureDB()
-  -- Lua 5.0 (WoW 1.12) — use string.lower, not msg:lower()
-  msg = (type(msg) == "string" and string.lower(msg)) or ""
+  if type(msg) ~= "string" then msg = "" end
+  msg = string.lower(msg)
 
-  if msg == "stats" or msg == "" then
-    local n = table.getn(RollLoggerDB.entries or {})  -- avoid '#'
+  if msg == "" or msg == "stats" then
+    local entries = RollLoggerDB.entries
+    local n = tlen(entries)
     local gt50 = 0
-    for _, r in ipairs(RollLoggerDB.entries) do
-      if r.min == 1 and r.max == 100 and r.result and r.result > 50 then
+    local i
+    for i = 1, n do
+      local r = entries[i]
+      if r and r.min == 1 and r.max == 100 and r.result and r.result > 50 then
         gt50 = gt50 + 1
       end
     end
     DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r Recorded rolls: %d  (1-100 and >50: %d)", n, gt50))
     DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r /rolllog export  - rebuild CSV buffer")
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r /rolllog reset   - clear data (irreversible)")
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r /rolllog reset   - clear data")
     return
 
   elseif msg == "reset" then
-    RollLoggerDB.entries   = {}
-    RollLoggerDB.csvLines  = { "timestamp,player,result,min,max,idx" }
+    RollLoggerDB.entries      = {}
+    RollLoggerDB.csvLines     = { "timestamp,player,result,min,max,idx" }
     RollLoggerDB.sessionCount = 0
     DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Data cleared.")
     return
 
   elseif msg == "export" then
     RollLoggerDB.csvLines = { "timestamp,player,result,min,max,idx" }
-    for _, r in ipairs(RollLoggerDB.entries) do
-      -- appendCSV uses string.find-safe version below
-      appendCSV(r.ts, r.player, r.result, r.min, r.max, r.idx)
+    local entries = RollLoggerDB.entries
+    local n = tlen(entries)
+    local i
+    for i = 1, n do
+      local r = entries[i]
+      if r then appendCSV(r.ts, r.player, r.result, r.min, r.max, r.idx) end
     end
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r CSV buffer rebuilt. It will be written on /reload or logout.")
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r CSV buffer rebuilt. It will be written on /reload/logout.")
     return
   end
 
   DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Commands: /rolllog, /rolllog stats, /rolllog export, /rolllog reset")
 end
 
-f:SetScript("OnEvent", function(_, event, arg1)
+-- Event handler (no colon-string methods; use string.find and globals-only arg1 fallback)
+f:SetScript("OnEvent", function(_, event, a1)
   if event == "ADDON_LOADED" then
-    if arg1 == ADDON_NAME then
+    if a1 == ADDON_NAME then
       ensureDB()
       buildRollParser()
     end
     return
+  end
 
-  elseif event == "PLAYER_LOGIN" then
+  if event == "PLAYER_LOGIN" then
     ensureDB()
     if not rollParser then buildRollParser() end
     return
+  end
 
-  elseif event == "CHAT_MSG_SYSTEM" then
+  if event == "CHAT_MSG_SYSTEM" then
     if not rollParser then buildRollParser() end
-    local msg = arg1 or _G.arg1 or ""
-
-    local _, _, p, r, a, b = string.find(msg, rollParser)
-    if p and r and a and b then
-      recordRoll(p, r, a, b)
+    local msg = a1 or _G.arg1 or ""
+    -- Localized pattern first
+    local _, _, p, r, mn, mx = string.find(msg, rollParser)
+    if p and r and mn and mx then
+      recordRoll(p, r, mn, mx)
       return
     end
-
-    local _, _, p2, r2, a2, b2 = string.find(msg, "^(.+) rolls (%d+) %((%d+)%-(%d+)%)$")
-    if p2 and r2 and a2 and b2 then
-      recordRoll(p2, r2, a2, b2)
+    -- English fallback
+    local _, _, p2, r2, mn2, mx2 = string.find(msg, "^(.+) rolls (%d+) %((%d+)%-(%d+)%)$")
+    if p2 and r2 and mn2 and mx2 then
+      recordRoll(p2, r2, mn2, mx2)
       return
     end
   end
