@@ -158,9 +158,10 @@ end
 
 
 -- Event handler (no colon-string methods; use string.find and globals-only arg1 fallback)
-f:SetScript("OnEvent", function(_, event, a1)
+-- Vanilla/Turtle style: use globals `event` and `arg1`
+f:SetScript("OnEvent", function()
   if event == "ADDON_LOADED" then
-    if a1 == ADDON_NAME then
+    if arg1 == ADDON_NAME then
       ensureDB()
       buildRollParser()
     end
@@ -173,31 +174,28 @@ f:SetScript("OnEvent", function(_, event, a1)
     return
   end
 
-  if event == "CHAT_MSG_SYSTEM" then
+  if event == "CHAT_MSG_SYSTEM" or event == "CHAT_MSG_TEXT_EMOTE" or event == "CHAT_MSG_EMOTE" then
     if not rollParser then buildRollParser() end
-    local msg = a1 or _G.arg1 or ""
+    local msg = arg1 or ""
 
-    -- optional debug: show raw system line
-    if ROLLLOGGER_DEBUG and string.find(msg, "roll", 1, true) then
-      DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r SYS: " .. msg)
+    if ROLLLOGGER_DEBUG then
+      DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r EV=" .. tostring(event) .. " MSG=" .. msg)
     end
 
-    -- 1) strict English fallback (matches your screenshot exactly)
+    -- English pattern first: "Name rolls 57 (1-100)"
     local _, _, p2, r2, mn2, mx2 = string.find(msg, "^(.+) rolls (%d+) %((%d+)%-(%d+)%)$")
     if p2 and r2 and mn2 and mx2 then
-      p2 = trim(p2)
-      recordRoll(p2, r2, mn2, mx2)
+      recordRoll(trim(p2), r2, mn2, mx2)
       if ROLLLOGGER_DEBUG then
         DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r parsed EN: %s %s (%s-%s)", p2, r2, mn2, mx2))
       end
       return
     end
 
-    -- 2) localized pattern (just in case your client swaps strings)
+    -- Localized fallback built from RANDOM_ROLL_RESULT
     local _, _, p, r, mn, mx = string.find(msg, rollParser or "")
     if p and r and mn and mx then
-      p = trim(p)
-      recordRoll(p, r, mn, mx)
+      recordRoll(trim(p), r, mn, mx)
       if ROLLLOGGER_DEBUG then
         DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r parsed LOC: %s %s (%s-%s)", p, r, mn, mx))
       end
