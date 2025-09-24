@@ -1,4 +1,4 @@
--- RollLogger.lua (Turtle/Vanilla-safe)
+-- RollLogger.lua (Turtle/Vanilla-safe, ASCII only)
 
 local ADDON_NAME = "RollLogger"
 
@@ -15,7 +15,7 @@ f:RegisterEvent("CHAT_MSG_SYSTEM")
 f:RegisterEvent("CHAT_MSG_TEXT_EMOTE")
 f:RegisterEvent("CHAT_MSG_EMOTE")
 
--- SavedVariables schema:
+-- SavedVariables schema (for reference):
 -- RollLoggerDB = {
 --   entries = { { ts="YYYY-mm-dd HH:MM:SS", player="Name", result=57, min=1, max=100, idx=1 }, ... },
 --   csvLines = { "timestamp,player,result,min,max,idx", ... },
@@ -52,9 +52,9 @@ local function ensureDB()
     RollLoggerDB.stats = {
       total1to100 = 0,
       ge50_1to100 = 0,  -- >=50
-      gt50_1to100 = 0,  -- >50 (strict)
+      gt50_1to100 = 0,  -- >50
       lt50_1to100 = 0,  -- <50
-      eq50_1to100 = 0,  -- ==50 (visibility)
+      eq50_1to100 = 0,  -- ==50
       hist1to100  = {},
       built = false
     }
@@ -67,7 +67,7 @@ local function ensureDB()
   end
 end
 
--- Build a Lua pattern from RANDOM_ROLL_RESULT safely (escape all magic chars except placeholders).
+-- pattern builder (from RANDOM_ROLL_RESULT), fully escaped
 local rollParser
 local function escape_magic(s)
   return (string.gsub(s, "([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1"))
@@ -85,7 +85,7 @@ local function buildRollParser()
     table.insert(parts, escape_magic(string.sub(fmt, i, j - 1)))
     if spec == "s" then
       table.insert(parts, "(.+)")
-    else -- 'd'
+    else
       table.insert(parts, "(%d+)")
     end
     i = k + 1
@@ -102,8 +102,8 @@ end
 local function appendCSV(ts, player, result, minv, maxv, idx)
   local function q(s)
     s = tostring(s or "")
-    if string.find(s, '[",]') then
-      s = '"' .. string.gsub(s, '"', '""') .. '"'
+    if string.find(s, "[\",]") then
+      s = "\"" .. string.gsub(s, "\"", "\"\"") .. "\""
     end
     return s
   end
@@ -154,7 +154,7 @@ local function recordRoll(player, result, minv, maxv)
   table.insert(RollLoggerDB.entries, row)
   appendCSV(row.ts, row.player, row.result, row.min, row.max, row.idx)
 
-  -- LIVE STATS UPDATE (1–100 only)
+  -- live stats update (1-100 only)
   if row.min == 1 and row.max == 100 and row.result then
     local s = RollLoggerDB.stats
     local v = row.result
@@ -198,17 +198,17 @@ SlashCmdList["ROLLLOGGER"] = function(msg)
     local gt  = s.gt50_1to100
     local function pct(x) if n > 0 then return (x * 100.0 / n) else return 0 end end
 
-      DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r 1-100 rolls: %d", n))
-      DEFAULT_CHAT_FRAME:AddMessage(string.format("  >=50: %d (%0.1f%%)   <50: %d (%0.1f%%)", ge, pct(ge), lt, pct(lt)))
-      DEFAULT_CHAT_FRAME:AddMessage(string.format("  =50 : %d (%0.1f%%)   >50: %d (%0.1f%%)",  eq, pct(eq), gt, pct(gt)))
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r 1-100 rolls: %d", n))
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("  >=50: %d (%0.1f%%)   <50: %d (%0.1f%%)", ge, pct(ge), lt, pct(lt)))
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("  =50 : %d (%0.1f%%)   >50: %d (%0.1f%%)",  eq, pct(eq), gt, pct(gt)))
 
-    -- quick deciles (10-wide buckets)
+    -- deciles (10-wide buckets)
     local d
     for d = 0, 9 do
-      local lo, hi = d*10 + 1, d*10 + 10
+      local lo, hi = d * 10 + 1, d * 10 + 10
       local c, i = 0, lo
       for i = lo, hi do c = c + (s.hist1to100[i] or 0) end
-      DEFAULT_CHAT_FRAME:AddMessage(string.format("  %2d–%3d: %d", lo, hi, c))
+      DEFAULT_CHAT_FRAME:AddMessage(string.format("  %2d-%3d: %d", lo, hi, c))
     end
     return
   end
@@ -241,7 +241,7 @@ SlashCmdList["ROLLLOGGER"] = function(msg)
     for i = 1, N do
       if posCounts[i] > 0 then
         local p = posGT[i] * 100.0 / posCounts[i]
-        DEFAULT_CHAT_FRAME:AddMessage(string.format("  %2d: %d/%d = %.1f%%%%", i, posGT[i], posCounts[i], p))
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("  %2d: %d/%d = %0.1f%%", i, posGT[i], posCounts[i], p))
       else
         DEFAULT_CHAT_FRAME:AddMessage(string.format("  %2d: --", i))
       end
