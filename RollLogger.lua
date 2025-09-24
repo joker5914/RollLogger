@@ -198,9 +198,9 @@ SlashCmdList["ROLLLOGGER"] = function(msg)
     local gt  = s.gt50_1to100
     local function pct(x) if n > 0 then return (x * 100.0 / n) else return 0 end end
 
-    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r 1–100 rolls: %d", n))
-    DEFAULT_CHAT_FRAME:AddMessage(string.format("  >=50: %d (%.1f%%%%)   <50: %d (%.1f%%%%)", ge, pct(ge), lt, pct(lt)))
-    DEFAULT_CHAT_FRAME:AddMessage(string.format("  =50 : %d (%.1f%%%%)   >50: %d (%.1f%%%%)",  eq, pct(eq), gt, pct(gt)))
+      DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r 1-100 rolls: %d", n))
+      DEFAULT_CHAT_FRAME:AddMessage(string.format("  >=50: %d (%0.1f%%)   <50: %d (%0.1f%%)", ge, pct(ge), lt, pct(lt)))
+      DEFAULT_CHAT_FRAME:AddMessage(string.format("  =50 : %d (%0.1f%%)   >50: %d (%0.1f%%)",  eq, pct(eq), gt, pct(gt)))
 
     -- quick deciles (10-wide buckets)
     local d
