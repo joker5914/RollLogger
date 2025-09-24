@@ -36,6 +36,11 @@ local function now()
   return tostring(GetTime()) -- fallback: seconds since UI load
 end
 
+local function imod(a, b)
+  if math.mod then return math.mod(a, b) end
+  return math.fmod(a, b)
+end
+
 local function ensureDB()
   if type(RollLoggerDB) ~= "table" then RollLoggerDB = {} end
   if type(RollLoggerDB.entries) ~= "table" then RollLoggerDB.entries = {} end
@@ -231,7 +236,7 @@ SlashCmdList["ROLLLOGGER"] = function(msg)
       local r = entries[i]
       if r and r.min == 1 and r.max == 100 and r.result then
         idx = idx + 1
-        local pos = ((idx - 1) % N) + 1
+        local pos = imod(idx - 1, N) + 1
         posCounts[pos] = posCounts[pos] + 1
         if r.result > 50 then posGT[pos] = posGT[pos] + 1 end
       end
