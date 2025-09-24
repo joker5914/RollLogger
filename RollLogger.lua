@@ -2,33 +2,38 @@
 
 local ADDON_NAME = "RollLogger"
 
+-- helpers / config
 local ROLLLOGGER_DEBUG = false
 local function trim(s) return (string.gsub(s or "", "^%s*(.-)%s*$", "%1")) end
 local function tlen(t) return table.getn(t or {}) end
 
+-- frame & events
 local f = CreateFrame("Frame")
 f:RegisterEvent("ADDON_LOADED")
 f:RegisterEvent("PLAYER_LOGIN")
 f:RegisterEvent("CHAT_MSG_SYSTEM")
+f:RegisterEvent("CHAT_MSG_TEXT_EMOTE")
+f:RegisterEvent("CHAT_MSG_EMOTE")
 
 -- SavedVariables schema:
 -- RollLoggerDB = {
---   entries = { { ts="2025-09-22 12:34:56", player="Name", result=57, min=1, max=100, idx=1 }, ... },
+--   entries = { { ts="YYYY-mm-dd HH:MM:SS", player="Name", result=57, min=1, max=100, idx=1 }, ... },
 --   csvLines = { "timestamp,player,result,min,max,idx", ... },
 --   sessionCount = 0,
 --   totalCount   = 0,
 --   localeFmt    = RANDOM_ROLL_RESULT,
---   csvInit = true
+--   csvInit = true,
+--   stats = {
+--     total1to100 = 0, ge50_1to100 = 0, gt50_1to100 = 0, lt50_1to100 = 0, eq50_1to100 = 0,
+--     hist1to100 = { [1]=0, ... [100]=0 }, built = false
+--   }
 -- }
 
-local function tlen(t) return table.getn(t or {}) end
-
 local function now()
-  -- WoW exposes date() in 1.12; fall back if not.
   if type(date) == "function" then
     return date("%Y-%m-%d %H:%M:%S")
   end
-  return tostring(GetTime()) -- seconds since UI load
+  return tostring(GetTime()) -- fallback: seconds since UI load
 end
 
 local function ensureDB()
@@ -42,15 +47,31 @@ local function ensureDB()
   if not RollLoggerDB.sessionCount then RollLoggerDB.sessionCount = 0 end
   if not RollLoggerDB.totalCount   then RollLoggerDB.totalCount   = 0 end
   if not RollLoggerDB.localeFmt    then RollLoggerDB.localeFmt    = RANDOM_ROLL_RESULT or "%s rolls %d (%d-%d)" end
+
+  if type(RollLoggerDB.stats) ~= "table" then
+    RollLoggerDB.stats = {
+      total1to100 = 0,
+      ge50_1to100 = 0,  -- >=50
+      gt50_1to100 = 0,  -- >50 (strict)
+      lt50_1to100 = 0,  -- <50
+      eq50_1to100 = 0,  -- ==50 (visibility)
+      hist1to100  = {},
+      built = false
+    }
+  end
+  local i
+  for i = 1, 100 do
+    if not RollLoggerDB.stats.hist1to100[i] then
+      RollLoggerDB.stats.hist1to100[i] = 0
+    end
+  end
 end
 
 -- Build a Lua pattern from RANDOM_ROLL_RESULT safely (escape all magic chars except placeholders).
 local rollParser
-
 local function escape_magic(s)
   return (string.gsub(s, "([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1"))
 end
-
 local function buildRollParser()
   local fmt = RANDOM_ROLL_RESULT or "%s rolls %d (%d-%d)"
   local parts = {}
@@ -90,6 +111,31 @@ local function appendCSV(ts, player, result, minv, maxv, idx)
   table.insert(RollLoggerDB.csvLines, line)
 end
 
+-- rebuild stats from entries (used on login/reset)
+local function rebuildStats()
+  ensureDB()
+  local s = RollLoggerDB.stats
+  s.total1to100, s.ge50_1to100, s.gt50_1to100, s.lt50_1to100, s.eq50_1to100 = 0, 0, 0, 0, 0
+  local i
+  for i = 1, 100 do s.hist1to100[i] = 0 end
+
+  local entries = RollLoggerDB.entries or {}
+  local n = tlen(entries)
+  for i = 1, n do
+    local r = entries[i]
+    if r and r.min == 1 and r.max == 100 and r.result then
+      local v = r.result
+      s.total1to100 = s.total1to100 + 1
+      if v >= 50 then s.ge50_1to100 = s.ge50_1to100 + 1 end
+      if v >  50 then s.gt50_1to100 = s.gt50_1to100 + 1 end
+      if v <  50 then s.lt50_1to100 = s.lt50_1to100 + 1 end
+      if v == 50 then s.eq50_1to100 = s.eq50_1to100 + 1 end
+      if v >= 1 and v <= 100 then s.hist1to100[v] = (s.hist1to100[v] or 0) + 1 end
+    end
+  end
+  s.built = true
+end
+
 local function recordRoll(player, result, minv, maxv)
   ensureDB()
   if not isPlayerMe(player) then return end
@@ -107,58 +153,139 @@ local function recordRoll(player, result, minv, maxv)
   }
   table.insert(RollLoggerDB.entries, row)
   appendCSV(row.ts, row.player, row.result, row.min, row.max, row.idx)
+
+  -- LIVE STATS UPDATE (1–100 only)
+  if row.min == 1 and row.max == 100 and row.result then
+    local s = RollLoggerDB.stats
+    local v = row.result
+    s.total1to100 = s.total1to100 + 1
+    if v >= 50 then s.ge50_1to100 = s.ge50_1to100 + 1 end
+    if v >  50 then s.gt50_1to100 = s.gt50_1to100 + 1 end
+    if v <  50 then s.lt50_1to100 = s.lt50_1to100 + 1 end
+    if v == 50 then s.eq50_1to100 = s.eq50_1to100 + 1 end
+    if v >= 1 and v <= 100 then
+      s.hist1to100[v] = (s.hist1to100[v] or 0) + 1
+    end
+  end
+
+  if ROLLLOGGER_DEBUG then
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r +REC %s %d (%d-%d) idx=%d",
+      player, row.result or -1, row.min or -1, row.max or -1, row.idx))
+  end
 end
 
--- Slash command: /rolllog, /rolllog stats, /rolllog export, /rolllog reset
+-- Slash command: /rolllog, /rolllog stats, /rolllog ord [N], /rolllog export, /rolllog reset, /rolllog debug
 SLASH_ROLLLOGGER1 = "/rolllog"
 SlashCmdList["ROLLLOGGER"] = function(msg)
   ensureDB()
   if type(msg) ~= "string" then msg = "" end
   msg = trim(string.lower(msg))
 
-  if msg == "" or msg == "stats" then
+  -- help / default
+  if msg == "" or msg == "help" then
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Commands: /rolllog stats   /rolllog ord [N]   /rolllog export   /rolllog reset   /rolllog debug")
+    return
+  end
+
+  -- stats: show >=50 vs <50, plus =50 and strict >50; quick histogram buckets
+  if msg == "stats" then
+    if not RollLoggerDB.stats or not RollLoggerDB.stats.built then rebuildStats() end
+    local s   = RollLoggerDB.stats
+    local n   = s.total1to100
+    local ge  = s.ge50_1to100
+    local lt  = s.lt50_1to100
+    local eq  = s.eq50_1to100
+    local gt  = s.gt50_1to100
+    local function pct(x) if n > 0 then return (x * 100.0 / n) else return 0 end end
+
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r 1–100 rolls: %d", n))
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("  >=50: %d (%.1f%%%%)   <50: %d (%.1f%%%%)", ge, pct(ge), lt, pct(lt)))
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("  =50 : %d (%.1f%%%%)   >50: %d (%.1f%%%%)",  eq, pct(eq), gt, pct(gt)))
+
+    -- quick deciles (10-wide buckets)
+    local d
+    for d = 0, 9 do
+      local lo, hi = d*10 + 1, d*10 + 10
+      local c, i = 0, lo
+      for i = lo, hi do c = c + (s.hist1to100[i] or 0) end
+      DEFAULT_CHAT_FRAME:AddMessage(string.format("  %2d–%3d: %d", lo, hi, c))
+    end
+    return
+  end
+
+  -- ordinal analysis: /rolllog ord [N]  (default N=10, range 2..30)
+  if string.sub(msg, 1, 3) == "ord" then
+    local rawN = trim(string.sub(msg, 4))
+    local N = tonumber(rawN) or 10
+    if N < 2 then N = 2 end
+    if N > 30 then N = 30 end
+
     local entries = RollLoggerDB.entries or {}
     local n = tlen(entries)
-    local gt50 = 0
+    local posCounts, posGT = {}, {}
+    local i
+    for i = 1, N do posCounts[i] = 0; posGT[i] = 0 end
+
+    local idx = 0
     for i = 1, n do
       local r = entries[i]
-      if r and r.min == 1 and r.max == 100 and r.result and r.result > 50 then
-        gt50 = gt50 + 1
+      if r and r.min == 1 and r.max == 100 and r.result then
+        idx = idx + 1
+        local pos = ((idx - 1) % N) + 1
+        posCounts[pos] = posCounts[pos] + 1
+        if r.result > 50 then posGT[pos] = posGT[pos] + 1 end
       end
     end
-    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r Recorded rolls: %d  (1-100 > 50: %d)", n, gt50))
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Commands: /rolllog stats   /rolllog export   /rolllog reset   /rolllog debug")
-    return
 
-  elseif msg == "export" then
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00FF7F[RollLogger]|r Ordinal >50 rates (block=%d)", N))
+    for i = 1, N do
+      if posCounts[i] > 0 then
+        local p = posGT[i] * 100.0 / posCounts[i]
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("  %2d: %d/%d = %.1f%%%%", i, posGT[i], posCounts[i], p))
+      else
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("  %2d: --", i))
+      end
+    end
+    return
+  end
+
+  -- export to SavedVariables CSV buffer (flush to disk on /reload/logout)
+  if msg == "export" then
     RollLoggerDB.csvLines = { "timestamp,player,result,min,max,idx" }
     local entries = RollLoggerDB.entries or {}
+    local i
     for i = 1, tlen(entries) do
       local r = entries[i]
       if r then appendCSV(r.ts, r.player, r.result, r.min, r.max, r.idx) end
     end
     DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r CSV buffer rebuilt. It will be written on /reload or logout.")
     return
+  end
 
-  elseif msg == "reset" then
+  -- reset data & stats
+  if msg == "reset" then
     RollLoggerDB.entries      = {}
     RollLoggerDB.csvLines     = { "timestamp,player,result,min,max,idx" }
     RollLoggerDB.sessionCount = 0
+    RollLoggerDB.totalCount   = 0
+    RollLoggerDB.stats        = { total1to100 = 0, ge50_1to100 = 0, gt50_1to100 = 0, lt50_1to100 = 0, eq50_1to100 = 0, hist1to100 = {}, built = true }
+    local i
+    for i = 1, 100 do RollLoggerDB.stats.hist1to100[i] = 0 end
     DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Data cleared.")
     return
+  end
 
-  elseif msg == "debug" then
+  -- toggle debug
+  if msg == "debug" then
     ROLLLOGGER_DEBUG = not ROLLLOGGER_DEBUG
     DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Debug: " .. (ROLLLOGGER_DEBUG and "ON" or "OFF"))
     return
   end
 
-  DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Unknown command. Commands: /rolllog stats   /rolllog export   /rolllog reset   /rolllog debug")
+  DEFAULT_CHAT_FRAME:AddMessage("|cff00FF7F[RollLogger]|r Unknown command. Try /rolllog stats or /rolllog ord 10")
 end
 
-
--- Event handler (no colon-string methods; use string.find and globals-only arg1 fallback)
--- Vanilla/Turtle style: use globals `event` and `arg1`
+-- Classic 1.12 handler: use global event/arg1
 f:SetScript("OnEvent", function()
   if event == "ADDON_LOADED" then
     if arg1 == ADDON_NAME then
@@ -171,6 +298,7 @@ f:SetScript("OnEvent", function()
   if event == "PLAYER_LOGIN" then
     ensureDB()
     if not rollParser then buildRollParser() end
+    rebuildStats() -- build from any prior entries
     return
   end
 
