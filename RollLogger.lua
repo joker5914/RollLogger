@@ -34,12 +34,17 @@ local function parseMoneyToCopper(str)
   if any then return total else return nil end
 end
 
+local function imod(a, b)
+  if math.mod then return math.mod(a, b) end
+  return math.fmod(a, b)
+end
+
 local function fmtCopper(c)
   local sign = ""
   if c < 0 then sign = "-"; c = -c end
   local g = math.floor(c / 10000)
-  local s = math.floor((c % 10000) / 100)
-  local k = c % 100
+  local s = math.floor(imod(c, 10000) / 100)
+  local k = imod(c, 100)
   local out = {}
   if g > 0 then table.insert(out, tostring(g).."g") end
   if s > 0 then table.insert(out, tostring(s).."s") end
